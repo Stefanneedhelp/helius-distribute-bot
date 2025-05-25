@@ -1,68 +1,77 @@
-from flask import Flask, request
-import requests
 import os
+import requests
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Preuzmi podatke iz Render okruženja ili koristi fallback
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+INTROVERT_MINT = "4fJVpHzgaQ5F5BmFWpLrVf7zdmkYJccgcz6XMQo1pump"
+INTROVERT_PRICE = 0.0065  # Ažuriraj ako se cena menja
 
-def send_telegram_message(text):
+def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
+    data = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown"
+        "text": message
     }
-    response = requests.post(url, json=payload)
-    print(f"📨 Telegram response: {response.status_code} {response.text}")
+    response = requests.post(url, data=data)
+    print("📨 Telegram response:", response.status_code, response.text)
 
 @app.route("/", methods=["POST"])
-def handle_webhook():
+def webhook():
+    data = request.get_json()
+    print("📥 Stigao payload:", data)
+
     try:
-        data = request.get_json()
-        print("📥 Stigao payload:", data)
+        for tx in data:
+            meta = tx.get("meta", {})
+            if meta.get("err") is not None:
+                continue  # preskoči failovane tx
 
-        transactions = data if isinstance(data, list) else [data]
+            post_tokens = meta.get("postTokenBalances", [])
+            pre_tokens = meta.get("preTokenBalances", [])
+            signature = tx.get("transaction", {}).get("signatures", [""])[0]
 
-        for tx in transactions:
-            try:
-                pre = tx.get("meta", {}).get("preTokenBalances", [])
-                post = tx.get("meta", {}).get("postTokenBalances", [])
-                sig = tx["transaction"]["signatures"][0]
+            # Tražimo Introvert token
+            for i, post in enumerate(post_tokens):
+                if post["mint"] != INTROVERT_MINT:
+                    continue
 
-                for pre_bal, post_bal in zip(pre, post):
-                    mint = pre_bal["mint"]
-                    owner = pre_bal["owner"]
+                post_amt = float(post["uiTokenAmount"]["amount"])
+                pre_amt = float(pre_tokens[i]["uiTokenAmount"]["amount"])
 
-                    if mint != post_bal["mint"] or owner != post_bal["owner"]:
-                        continue  # sigurnosna provera
+                delta = post_amt - pre_amt
+                usd_total = abs(delta) * INTROVERT_PRICE
 
-                    pre_amount = float(pre_bal["uiTokenAmount"]["uiAmount"])
-                    post_amount = float(post_bal["uiTokenAmount"]["uiAmount"])
-                    delta = round(post_amount - pre_amount, 6)
+                if usd_total < 100:
+                    continue  # ignoriši male tx
 
-                    if abs(delta) >= 100:
-                        action = "🟢 Kupovina" if delta > 0 else "🔴 Prodaja"
+                if delta > 0:
+                    tip = "Kupovina"
+                elif delta < 0:
+                    tip = "Prodaja"
+                else:
+                    continue  # nema promene
 
-                        send_telegram_message(
-                            f"{action} detektovana!\n\n"
-                            f"💸 Token: `{mint}`\n"
-                            f"📊 Promena: *{abs(delta):,.2f}*\n"
-                            f"🔗 Signature: `{sig}`"
-                        )
+                message = (
+                    f"📢 Nova transakcija detektovana!\n\n"
+                    f"Tip: {tip}\n"
+                    f"Iznos: {abs(delta):,.2f} INTROVERT\n"
+                    f"Vrednost: ${usd_total:,.2f}\n"
+                    f"Signature: {signature}"
+                )
+                send_telegram_message(message)
 
-            except Exception as e:
-                print(f"❌ Greška u analizi transakcije: {e}")
-
-        return "OK", 200
     except Exception as e:
-        print(f"❌ Webhook error: {e}")
-        return "Error", 500
+        print("❌ Greška:", str(e))
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(debug=True)
+
 
 
 
