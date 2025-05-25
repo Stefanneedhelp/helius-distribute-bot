@@ -4,41 +4,66 @@ import os
 
 app = Flask(__name__)
 
-# 🔐 Telegram token i chat ID iz environmenta
+# Preuzmi podatke iz Render okruženja ili koristi fallback
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+    response = requests.post(url, json=payload)
+    print(f"📨 Telegram response: {response.status_code} {response.text}")
 
 @app.route("/", methods=["POST"])
-def webhook():
-    data = request.get_json()
-    print("📥 Stigao payload:", data)  # LOG ceo payload
-
+def handle_webhook():
     try:
-        # Proveravamo da li je lista (kako Helius obično šalje)
-        if isinstance(data, list):
-            transaction = data[0]
-        else:
-            transaction = data
+        data = request.get_json()
+        print("📥 Stigao payload:", data)
 
-        signature = transaction.get("transaction", {}).get("signatures", [""])[0]
+        transactions = data if isinstance(data, list) else [data]
 
-        message = f"📢 Nova transakcija primljena!\n\nSignature: {signature}"
-        send_telegram(message)
+        for tx in transactions:
+            try:
+                pre = tx.get("meta", {}).get("preTokenBalances", [])
+                post = tx.get("meta", {}).get("postTokenBalances", [])
+                sig = tx["transaction"]["signatures"][0]
+
+                for pre_bal, post_bal in zip(pre, post):
+                    mint = pre_bal["mint"]
+                    owner = pre_bal["owner"]
+
+                    if mint != post_bal["mint"] or owner != post_bal["owner"]:
+                        continue  # sigurnosna provera
+
+                    pre_amount = float(pre_bal["uiTokenAmount"]["uiAmount"])
+                    post_amount = float(post_bal["uiTokenAmount"]["uiAmount"])
+                    delta = round(post_amount - pre_amount, 6)
+
+                    if abs(delta) >= 100:
+                        action = "🟢 Kupovina" if delta > 0 else "🔴 Prodaja"
+
+                        send_telegram_message(
+                            f"{action} detektovana!\n\n"
+                            f"💸 Token: `{mint}`\n"
+                            f"📊 Promena: *{abs(delta):,.2f}*\n"
+                            f"🔗 Signature: `{sig}`"
+                        )
+
+            except Exception as e:
+                print(f"❌ Greška u analizi transakcije: {e}")
 
         return "OK", 200
-
     except Exception as e:
-        print("⚠️ Webhook error:", str(e))
+        print(f"❌ Webhook error: {e}")
         return "Error", 500
 
-def send_telegram(message):
-    payload = {"chat_id": CHAT_ID, "text": message}
-    response = requests.post(TELEGRAM_API_URL, json=payload)
-    print("📨 Telegram response:", response.status_code, response.text)
-
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)
+
 
 
 
