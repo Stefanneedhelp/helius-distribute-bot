@@ -1,71 +1,66 @@
-
 import os
 import requests
-from flask 
-import Flask, request, jsonify
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-TOKEN_SYMBOL = "Introvert"
-
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TOKEN_MINT = "4fJVpHzgaQ5F5BmFWpLrVf7zdmkYJccgcz6XMQo1pump"  # Mint za Introvert
 
 @app.route("/", methods=["POST"])
-def webhook():
-    data = request.json
-    print("\U0001F4E5 Stigao payload:", data)
+def handle_webhook():
+    data = request.get_json()
+    print("📥 Stigao payload:", data)
 
-    try:
-        for tx in data:
-            signature = tx.get("transaction", {}).get("signatures", [""])[0]
-            pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
-            post_balances = tx.get("meta", {}).get("postTokenBalances", [])
+    if not data:
+        return jsonify({"error": "No data"}), 400
 
-            if not pre_balances or not post_balances:
-                continue
+    for tx in data:
+        signature = tx.get("transaction", {}).get("signatures", [None])[0]
+        post_balances = tx.get("meta", {}).get("postTokenBalances", [])
+        pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
 
-            for pre, post in zip(pre_balances, post_balances):
-                pre_amt = int(pre['uiTokenAmount']['amount']) / (10 ** pre['uiTokenAmount']['decimals'])
-                post_amt = int(post['uiTokenAmount']['amount']) / (10 ** post['uiTokenAmount']['decimals'])
-                
-                delta = post_amt - pre_amt
-                
-                if abs(delta) < 100:
-                    continue  # preskoci ako nije preko 100$ (u token jedinicama)
+        if not signature or not post_balances or not pre_balances:
+            continue
 
-                tx_type = "Kupovina" if delta > 0 else "Prodaja"
-                
-                msg = (
-                    f"\U0001F4E2 Nova transakcija!
-"
-                    f"Vrsta: {tx_type}\n"
-                    f"Token: {TOKEN_SYMBOL}\n"
-                    f"Količina: {abs(round(delta, 3))}\n"
-                    f"Signature: {signature}"
-                )
-                
-                send_telegram(msg)
+        # Tražimo stanje za mint koji nas zanima
+        introvert_pre = next((b for b in pre_balances if b["mint"] == TOKEN_MINT), None)
+        introvert_post = next((b for b in post_balances if b["mint"] == TOKEN_MINT), None)
 
-    except Exception as e:
-        print("\u274C Greska u obradi payloada:", str(e))
+        if not introvert_pre or not introvert_post:
+            continue
 
-    return jsonify({"status": "ok"})
+        pre_amount = float(introvert_pre["uiTokenAmount"]["uiAmount"])
+        post_amount = float(introvert_post["uiTokenAmount"]["uiAmount"])
+        delta = round(abs(post_amount - pre_amount), 2)
 
+        if delta < 100:
+            continue  # preskoči transakcije manje od $100
 
-def send_telegram(message):
-    if not TELEGRAM_CHAT_ID:
-        print("\u274C CHAT_ID nije postavljen!")
+        tx_type = "Kupovina" if post_amount > pre_amount else "Prodaja"
+
+        message = (
+            f"📢 Nova transakcija!\n\n"
+            f"Tip: {tx_type}\n"
+            f"Iznos: ${delta:.2f}\n"
+            f"Signature: {signature}"
+        )
+
+        send_telegram_message(message)
+
+    return "OK", 200
+
+def send_telegram_message(text):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("TELEGRAM_CHAT_ID ili TOKEN nije postavljen.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
     response = requests.post(url, json=payload)
-    print("\U0001F4E8 Telegram response:", response.status_code, response.text)
 
+    print("📨 Telegram response:", response.status_code, response.text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
