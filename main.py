@@ -8,7 +8,7 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
 # Cena 1 Distribute.AI tokena u USDC (postavi stvarnu ako znaš)
-TOKEN_PRICE = 0.012  # ← Ovde menjaš po potrebi
+TOKEN_PRICE = 0.03756  # ← Ovde menjaš po potrebi
 
 @app.route("/", methods=["POST"])
 def helius_webhook():
