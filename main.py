@@ -35,8 +35,8 @@ def handle_webhook():
         post_amount = float(introvert_post["uiTokenAmount"]["uiAmount"])
         delta = round(abs(post_amount - pre_amount), 2)
 
-        if delta < 100:
-            continue  # preskoči transakcije manje od $100
+        if delta < 1000:
+            continue  # preskoči transakcije manje od $1000
 
         tx_type = "Kupovina" if post_amount > pre_amount else "Prodaja"
 
