@@ -7,40 +7,27 @@ app = Flask(__name__)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
 @app.route("/", methods=["POST"])
-def handle_webhook():
+def webhook():
+    data = request.get_json()
     try:
-        payload = request.get_json()
+        # Provera da li je transakcija validna
+        transaction = data[0]  # <- zato što Helius šalje listu
+        signature = transaction.get("transaction", {}).get("signatures", [""])[0]
+        amount = transaction.get("meta", {}).get("postBalances", [])[0]  # primer
 
-        # Helius šalje listu transakcija
-        for tx in payload:
-            signature = tx.get("signature", "n/a")
-            timestamp = tx.get("timestamp", "n/a")
-            description = tx.get("description", "No description")
-            type_ = tx.get("type", "Unknown")
-
-            message = f"📥 Nova transakcija:\n🧾 {description}\n📌 Tip: {type_}\n🕒 Vreme: {timestamp}\n🔗 https://solscan.io/tx/{signature}"
-            send_telegram_message(message)
-
+        message = f"📢 Nova transakcija!\n\nSignature: {signature}\nAmount: {amount}"
+        requests.post(TELEGRAM_API_URL, json={"chat_id": CHAT_ID, "text": message})
         return "OK", 200
-
     except Exception as e:
-        print(f"Webhook error: {e}")
-        return "ERROR", 500
+        print("Webhook error:", str(e))
+        return "Error", 500
 
-
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": text}
-    try:
-        response = requests.post(url, json=data)
-        if not response.ok:
-            print("Telegram error:", response.text)
-    except Exception as e:
-        print("Telegram exception:", e)
-
-if __name__ == "__main__":
-    app.run(debug=True)
+@app.route("/", methods=["GET"])
+def home():
+    return "Webhook radi 🚀", 200
 
 
 
