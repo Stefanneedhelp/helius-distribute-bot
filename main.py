@@ -7,16 +7,18 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-TOKEN_PRICE = 0.012  # Procenjena cena tokena
+TOKEN_PRICE = 0.012  # cena tokena u USDC
 
 @app.route("/", methods=["POST"])
 def helius_webhook():
     try:
         data_list = request.get_json()
+        print("Primljeno:", data_list)
 
-        for data in data_list:  # <- Jer Helius šalje listu događaja
-
+        for data in data_list:
             transfers = data.get("events", {}).get("tokenTransfers", [])
+            print("Transferi pronađeni:", transfers)
+
             if not transfers:
                 continue
 
@@ -26,8 +28,10 @@ def helius_webhook():
                 receiver = transfer["to"]
                 usd_value = amount * TOKEN_PRICE
 
+                print(f"Obrađujem transfer: {amount} tokena (~${usd_value:.2f})")
+
                 if usd_value < 20:
-                    print(f"Ignorisano: ${usd_value:.2f}")
+                    print(f"Ignorisano jer je manje od $20")
                     continue
 
                 signature = data.get("transaction", {}).get("signature", "N/A")
@@ -49,16 +53,19 @@ def helius_webhook():
     return {"status": "ok"}
 
 def send_telegram_message(text):
+    print("Šaljem poruku na Telegram:", text)
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": text,
         "parse_mode": "Markdown"
     }
-    requests.post(url, json=payload)
+    response = requests.post(url, json=payload)
+    print("Telegram odgovor:", response.status_code, response.text)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
 
 
 
