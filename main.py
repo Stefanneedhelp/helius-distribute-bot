@@ -1,69 +1,49 @@
-import os
-import requests
-from flask import Flask, request, jsonify
 
-app = Flask(__name__)
+from flask import Flask, request import os import requests from dotenv import load_dotenv
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-TOKEN_MINT = "4fJVpHzgaQ5F5BmFWpLrVf7zdmkYJccgcz6XMQo1pump"  # Mint za Introvert
+load_dotenv()
 
-@app.route("/", methods=["POST"])
-def handle_webhook():
-    data = request.get_json()
-    print("📥 Stigao payload:", data)
+app = Flask(name)
 
-    if not data:
-        return jsonify({"error": "No data"}), 400
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") MINT_ADDRESS = os.getenv("MINT_ADDRESS")  # nova adresa tokena koji se prati
 
+@app.route('/', methods=['POST']) def webhook(): data = request.get_json() print("\n\U0001F4E5 Stigao payload:", data)
+
+if not data:
+    return '', 200
+
+try:
     for tx in data:
-        signature = tx.get("transaction", {}).get("signatures", [None])[0]
-        post_balances = tx.get("meta", {}).get("postTokenBalances", [])
-        pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
+        # Proveri da li je u pitanju token koji pratimo
+        token_balances = tx.get("meta", {}).get("postTokenBalances", [])
+        if any(tb.get("mint") == MINT_ADDRESS for tb in token_balances):
 
-        if not signature or not post_balances or not pre_balances:
-            continue
+            # Proveri tip transakcije (prodaja/kupovina)
+            logovi = tx.get("meta", {}).get("logMessages", [])
+            tip = ""
+            for log in logovi:
+                if "Instruction: Sell" in log:
+                    tip = "Prodaja"
+                    break
+                elif "Instruction: Buy" in log:
+                    tip = "Kupovina"
+                    break
 
-        # Tražimo stanje za mint koji nas zanima
-        introvert_pre = next((b for b in pre_balances if b["mint"] == TOKEN_MINT), None)
-        introvert_post = next((b for b in post_balances if b["mint"] == TOKEN_MINT), None)
+            # Cene se nalaze kod programa JUP i pAMM, ali ovde pojednostavljeno
+            signature = tx.get("transaction", {}).get("signatures", [""])[0]
+            poruka = f"\U0001F4E2 Nova transakcija!\n\nTip: {tip or 'Nepoznat'}\nSignature: {signature}"
 
-        if not introvert_pre or not introvert_post:
-            continue
+            # Pošalji na Telegram
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": poruka}
+            )
 
-        pre_amount = float(introvert_pre["uiTokenAmount"]["uiAmount"])
-        post_amount = float(introvert_post["uiTokenAmount"]["uiAmount"])
-        delta = round(abs(post_amount - pre_amount), 2)
+except Exception as e:
+    print("\n\u26A0\uFE0F Greska pri obradi:", e)
 
-        if delta < 100:
-            continue  # preskoči transakcije manje od $100
+return '', 200
 
-        tx_type = "Kupovina" if post_amount > pre_amount else "Prodaja"
-
-        message = (
-            f"📢 Nova transakcija!\n\n"
-            f"Tip: {tx_type}\n"
-            f"Iznos: ${delta:.2f}\n"
-            f"Signature: {signature}"
-        )
-
-        send_telegram_message(message)
-
-    return "OK", 200
-
-def send_telegram_message(text):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("TELEGRAM_CHAT_ID ili TOKEN nije postavljen.")
-        return
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
-    response = requests.post(url, json=payload)
-
-    print("📨 Telegram response:", response.status_code, response.text)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
 
 
 
