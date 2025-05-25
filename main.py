@@ -35,7 +35,7 @@ def handle_webhook():
                     continue
 
                 # Procena cene po tokenu
-                price_per_token = 0.0065  # OVDE ažuriraj ako imaš API ili dinamički izračun
+                price_per_token = 0.03345  # OVDE ažuriraj ako imaš API ili dinamički izračun
                 value_usd = abs(delta) * price_per_token
 
                 if value_usd > 100:
