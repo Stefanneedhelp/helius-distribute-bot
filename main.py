@@ -1,3 +1,4 @@
+
 from flask import Flask, request
 import os
 import requests
@@ -7,37 +8,41 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Trenutna vrednost tokena u USDC
-TOKEN_PRICE = 0.012  # prilagodi po potrebi
+TOKEN_PRICE = 0.012  # cena tokena u USDC
 
 @app.route("/", methods=["POST"])
 def helius_webhook():
     data = request.get_json()
+    print(data)  # <--- ovo dodaj samo za debug
 
     try:
-        # Raw webhook ima drugačiji format: lista transakcija
-        transfer = data["events"]["tokenTransfers"][0]
-        signature = data["transaction"]["signature"]
+        # Raw webhook: "events" je u root, "tokenTransfers" je lista
+        transfers = data.get("events", {}).get("tokenTransfers", [])
 
-        amount = float(transfer["tokenAmount"]["amount"])
-        sender = transfer["from"]
-        receiver = transfer["to"]
+        if not transfers:
+            return {"status": "no token transfers"}
 
-        usd_value = amount * TOKEN_PRICE
+        for transfer in transfers:
+            amount = float(transfer["tokenAmount"]["amount"])
+            sender = transfer["from"]
+            receiver = transfer["to"]
+            usd_value = amount * TOKEN_PRICE
 
-        if usd_value < 20:
-            print(f"Ignorisano: ${usd_value:.2f}")
-            return {"status": "ispod praga"}
+            if usd_value < 20:
+                print(f"Ignorisano: ${usd_value:.2f}")
+                continue
 
-        msg = (
-            f"*💸 Velika transakcija DISTRIBUTE.AI!*\n"
-            f"Iznos: `{int(amount)}` (~${usd_value:,.2f})\n"
-            f"Od: `{sender}`\n"
-            f"Ka: `{receiver}`\n"
-            f"[Solscan](https://solscan.io/tx/{signature})"
-        )
+            signature = data.get("transaction", {}).get("signature", "N/A")
 
-        send_telegram_message(msg)
+            msg = (
+                f"*💸 Velika transakcija DISTRIBUTE.AI!*\n"
+                f"Iznos: `{int(amount)}` (~${usd_value:,.2f})\n"
+                f"Od: `{sender}`\n"
+                f"Ka: `{receiver}`\n"
+                f"[Solscan](https://solscan.io/tx/{signature})"
+            )
+
+            send_telegram_message(msg)
 
     except Exception as e:
         print(f"Greška u obradi: {e}")
