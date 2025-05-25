@@ -1,46 +1,46 @@
 import os
-from flask import Flask, request
 import requests
+from flask import Flask, request
 
 app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-def send_telegram_message(text):
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    }
-    response = requests.post(TELEGRAM_URL, json=payload)
-    return response.ok
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 @app.route("/", methods=["POST"])
-def webhook():
-    data = request.get_json()
+def handle_webhook():
     try:
-        tx = data["transactions"][0]
-        sig = tx["transaction"]["signatures"][0]
-        block_time = tx.get("blockTime", "?")
-        message = f"\ud83d\udce6 <b>Nova transakcija</b>\n🔗 Signature: <code>{sig}</code>\n🕒 Block time: {block_time}"
+        payload = request.get_json()
 
-        transfers = tx.get("transfers", [])
-        if transfers:
-            message += "\n💸 Transferi:"
-            for tr in transfers:
-                message += f"\n- {tr['from']} → {tr['to']}: {tr['amount']} {tr['mint']}"
+        # Helius šalje listu transakcija
+        for tx in payload:
+            signature = tx.get("signature", "n/a")
+            timestamp = tx.get("timestamp", "n/a")
+            description = tx.get("description", "No description")
+            type_ = tx.get("type", "Unknown")
 
-        send_telegram_message(message)
+            message = f"📥 Nova transakcija:\n🧾 {description}\n📌 Tip: {type_}\n🕒 Vreme: {timestamp}\n🔗 https://solscan.io/tx/{signature}"
+            send_telegram_message(message)
+
         return "OK", 200
+
     except Exception as e:
-        print("Webhook error:", e)
-        return "Error", 500
+        print(f"Webhook error: {e}")
+        return "ERROR", 500
+
+
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": text}
+    try:
+        response = requests.post(url, json=data)
+        if not response.ok:
+            print("Telegram error:", response.text)
+    except Exception as e:
+        print("Telegram exception:", e)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(debug=True)
 
 
 
