@@ -27,7 +27,7 @@ def helius_webhook():
         # Preračunavanje vrednosti u USD
         usd_value = amount * TOKEN_PRICE
 
-        # Ako je vrednost manja od $5,000 → ignoriši
+        # Ako je vrednost manja od $20 → ignoriši
         if usd_value < 20:
             print(f"Ignorisano: ${usd_value:.2f}")
             return {"status": "ignored - below threshold"}
