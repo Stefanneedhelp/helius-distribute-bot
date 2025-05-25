@@ -7,41 +7,37 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
-# Cena 1 Distribute.AI tokena u USDC (postavi stvarnu ako znaš)
-TOKEN_PRICE = 0.03756  # ← Ovde menjaš po potrebi
+# Trenutna vrednost tokena u USDC
+TOKEN_PRICE = 0.012  # prilagodi po potrebi
 
 @app.route("/", methods=["POST"])
 def helius_webhook():
     data = request.get_json()
 
     try:
-        tx = data["transactions"][0]
-        transfer = tx["tokenTransfers"][0]
-        signature = tx["signature"]
+        # Raw webhook ima drugačiji format: lista transakcija
+        transfer = data["events"]["tokenTransfers"][0]
+        signature = data["transaction"]["signature"]
 
-        # Detalji o transferu
-        amount = float(transfer["rawTokenAmount"]["tokenAmount"])
-        sender = transfer["fromUserAccount"]
-        receiver = transfer["toUserAccount"]
+        amount = float(transfer["tokenAmount"]["amount"])
+        sender = transfer["from"]
+        receiver = transfer["to"]
 
-        # Preračunavanje vrednosti u USD
         usd_value = amount * TOKEN_PRICE
 
-        # Ako je vrednost manja od $20 → ignoriši
         if usd_value < 20:
             print(f"Ignorisano: ${usd_value:.2f}")
-            return {"status": "ignored - below threshold"}
+            return {"status": "ispod praga"}
 
-        # Sastavi poruku
-        message = (
+        msg = (
             f"*💸 Velika transakcija DISTRIBUTE.AI!*\n"
             f"Iznos: `{int(amount)}` (~${usd_value:,.2f})\n"
             f"Od: `{sender}`\n"
             f"Ka: `{receiver}`\n"
-            f"[Pogledaj na Solscan](https://solscan.io/tx/{signature})"
+            f"[Solscan](https://solscan.io/tx/{signature})"
         )
 
-        send_telegram_message(message)
+        send_telegram_message(msg)
 
     except Exception as e:
         print(f"Greška u obradi: {e}")
@@ -60,4 +56,5 @@ def send_telegram_message(text):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
+
 
