@@ -1,59 +1,69 @@
-import os import requests from flask import Flask, request
+import os
+import requests
+from flask import Flask, request, jsonify
 
-app = Flask(name)
+app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") TOKEN_MINT = "2AEU9yWk3dEGnVwRaKv4div5TarC4dn7axFLyz6zG4Pf"  # nova adresa tokena
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+TOKEN_MINT = "4fJVpHzgaQ5F5BmFWpLrVf7zdmkYJccgcz6XMQo1pump"  # Mint za Introvert
 
-@app.route("/", methods=["POST"]) def webhook(): data = request.get_json() print("\n\U0001F4E5 Stigao payload:", data)
+@app.route("/", methods=["POST"])
+def handle_webhook():
+    data = request.get_json()
+    print("📥 Stigao payload:", data)
 
-try:
+    if not data:
+        return jsonify({"error": "No data"}), 400
+
     for tx in data:
-        post_balances = tx["meta"].get("postTokenBalances", [])
-        pre_balances = tx["meta"].get("preTokenBalances", [])
+        signature = tx.get("transaction", {}).get("signatures", [None])[0]
+        post_balances = tx.get("meta", {}).get("postTokenBalances", [])
+        pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
 
-        for post, pre in zip(post_balances, pre_balances):
-            if post["mint"] != TOKEN_MINT:
-                continue
+        if not signature or not post_balances or not pre_balances:
+            continue
 
-            amount_post = int(post["uiTokenAmount"]["amount"])
-            amount_pre = int(pre["uiTokenAmount"]["amount"])
-            diff = amount_post - amount_pre
+        # Tražimo stanje za mint koji nas zanima
+        introvert_pre = next((b for b in pre_balances if b["mint"] == TOKEN_MINT), None)
+        introvert_post = next((b for b in post_balances if b["mint"] == TOKEN_MINT), None)
 
-            # ignorisi male transakcije
-            decimals = int(post["uiTokenAmount"]["decimals"])
-            amount_diff = diff / (10**decimals)
-            if abs(amount_diff) < 100:
-                continue
+        if not introvert_pre or not introvert_post:
+            continue
 
-            direction = "Kupovina" if amount_diff > 0 else "Prodaja"
+        pre_amount = float(introvert_pre["uiTokenAmount"]["uiAmount"])
+        post_amount = float(introvert_post["uiTokenAmount"]["uiAmount"])
+        delta = round(abs(post_amount - pre_amount), 2)
 
-            signature = tx.get("transaction", {}).get("signatures", [""])[0]
-            message = (
-                f"\U0001F4E2 Nova transakcija!\n\n"
-                f"Token: Introvert\n"
-                f"Vrsta: {direction}\n"
-                f"Iznos: {abs(amount_diff):,.2f}\n"
-                f"Tx: {signature}"
-            )
+        if delta < 1000:
+            continue  # preskoči transakcije manje od $1000
 
-            send_telegram_message(message)
-except Exception as e:
-    print("Greska u obradi transakcije:", e)
+        tx_type = "Kupovina" if post_amount > pre_amount else "Prodaja"
 
-return "ok"
+        message = (
+            f"📢 Nova transakcija!\n\n"
+            f"Tip: {tx_type}\n"
+            f"Iznos: ${delta:.2f}\n"
+            f"Signature: {signature}"
+        )
 
-def send_telegram_message(message): if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID: print("\u274C Telegram chat ID ili token nije postavljen!") return
+        send_telegram_message(message)
 
-url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-payload = {
-    "chat_id": TELEGRAM_CHAT_ID,
-    "text": message,
-    "parse_mode": "HTML"
-}
-response = requests.post(url, json=payload)
-print("\U0001F4E8 Telegram response:", response.status_code, response.text)
+    return "OK", 200
 
-if name == "main": app.run(host="0.0.0.0", port=10000)
+def send_telegram_message(text):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("TELEGRAM_CHAT_ID ili TOKEN nije postavljen.")
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+    response = requests.post(url, json=payload)
+
+    print("📨 Telegram response:", response.status_code, response.text)
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
 
 
 
