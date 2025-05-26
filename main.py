@@ -1,6 +1,9 @@
 import os
+from flask import Flask, request
 import requests
-from flask import Flask, request, jsonify
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -9,76 +12,83 @@ CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
 
-def send_telegram_message(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print("❌ Greška pri slanju poruke:", e)
-
 def get_token_price(mint_address):
     try:
-        res = requests.get(DEXSCREENER_API + mint_address)
-        data = res.json()
-        if "pairs" in data and data["pairs"]:
-            return float(data["pairs"][0]["priceUsd"])
+        url = f"{DEXSCREENER_API}{mint_address}"
+        response = requests.get(url)
+        data = response.json()
+        if "pairs" in data and len(data["pairs"]) > 0:
+            price_usd = float(data["pairs"][0]["priceUsd"])
+            return price_usd
     except Exception as e:
-        print("❌ Greška u dohvatanju cene:", e)
+        print(f"❌ Greška u dohvatanju cene: {e}")
     return None
+
+def send_telegram_message(message):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
+        response = requests.post(url, json=payload)
+        print(f"✅ Poslata poruka: {response.status_code}")
+    except Exception as e:
+        print(f"❌ Greška u slanju poruke: {e}")
 
 @app.route("/", methods=["POST"])
 def webhook():
     payload = request.json
-    print("📥 Stigao payload:", payload)
+    print(f"📥 Stigao payload: {payload}")
 
-    if not MONITORED_MINT:
-        print("❌ Mint adresa nije definisana.")
-        return jsonify({"error": "No mint address set"}), 400
-
-    found = False
     for tx in payload:
         logs = tx.get("meta", {}).get("logMessages", [])
         if not any("Instruction: Swap" in log for log in logs):
             print("⏩ Preskačem: nije swap.")
-            continue  # nije SWAP
+            continue
 
-        balances = tx.get("meta", {}).get("postTokenBalances", [])
-        for balance in balances:
-            mint = balance.get("mint")
-            if mint == MONITORED_MINT:
-                found = True
-                amount_raw = int(balance.get("uiTokenAmount", {}).get("amount", "0"))
-                decimals = int(balance.get("uiTokenAmount", {}).get("decimals", 0))
-                amount = amount_raw / (10 ** decimals)
+        post_balances = tx.get("meta", {}).get("postTokenBalances", [])
+        pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
 
-                usd_price = get_token_price(mint)
-                if usd_price is None:
-                    continue
+        for post in post_balances:
+            if post.get("mint") != MONITORED_MINT:
+                continue
 
-                total_value = amount * usd_price
-                print(f"💱 SWAP za {amount:.4f} × ${usd_price:.6f} = ${total_value:.2f}")
+            owner = post.get("owner")
+            decimals = int(post["uiTokenAmount"]["decimals"])
+            post_amount = int(post["uiTokenAmount"]["amount"])
 
-                if total_value >= 100:
-                    msg = (
-                        f"🔁 <b>SWAP transakcija preko $100</b>\n\n"
-                        f"<b>Token:</b> {mint}\n"
-                        f"<b>Iznos:</b> {amount:.4f}\n"
-                        f"<b>Cena:</b> ${usd_price:.6f}\n"
-                        f"<b>Ukupno:</b> ${total_value:.2f}"
-                    )
-                    send_telegram_message(msg)
-                else:
-                    print(f"⏬ Swap ispod $100: {total_value:.2f}")
-                break
+            # Nađi pre amount za istog ownera
+            pre_amount = 0
+            for pre in pre_balances:
+                if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
+                    pre_amount = int(pre["uiTokenAmount"]["amount"])
+                    break
 
-    if not found:
-        print("⚠️ Nije pronađena relevantna transakcija za mint:", MONITORED_MINT)
+            delta = abs(post_amount - pre_amount) / (10 ** decimals)
+            usd_price = get_token_price(MONITORED_MINT)
 
-    return jsonify({"status": "ok"}), 200
+            if usd_price is None:
+                print("❌ Nema cene.")
+                continue
+
+            value_usd = delta * usd_price
+            print(f"📊 Transakcija: Δ{delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
+
+            if value_usd >= 100:
+                msg = (
+                    f"🔁 <b>SWAP transakcija preko $100</b>\n\n"
+                    f"<b>Token:</b> {MONITORED_MINT}\n"
+                    f"<b>Promena:</b> {delta:.4f}\n"
+                    f"<b>Cena:</b> ${usd_price:.4f}\n"
+                    f"<b>Ukupno:</b> ${value_usd:.2f}"
+                )
+                send_telegram_message(msg)
+            else:
+                print(f"⏬ Swap ispod $100: ${value_usd:.2f}")
+
+    return "OK", 200
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True)
+
 
 
 
