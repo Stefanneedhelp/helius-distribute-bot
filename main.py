@@ -45,15 +45,28 @@ def webhook():
             mint = balance.get("mint")
             if mint == MONITORED_MINT:
                 found = True
+                amount_raw = int(balance.get("uiTokenAmount", {}).get("amount", "0"))
+                decimals = int(balance.get("uiTokenAmount", {}).get("decimals", 0))
+                amount = amount_raw / (10 ** decimals)
+
                 usd_price = get_token_price(mint)
-                print(f"Cena tokena: {usd_price}")
-                
-                message = (
-                    f"💸 Nova transakcija za token:\n"
-                    f"<b>{mint}</b>\n\n"
-                    f"📊 Vrednost: <b>${usd_price:.6f}</b>"
-                )
-                send_telegram_message(message)
+                if usd_price is None:
+                    continue
+
+                total_value = amount * usd_price
+                print(f"🔍 Transakcija za {amount:.4f} tokena × ${usd_price:.6f} = ${total_value:.2f}")
+
+                if total_value >= 100:
+                    message = (
+                        f"💸 Transakcija iznad $100:\n"
+                        f"<b>{mint}</b>\n\n"
+                        f"📦 Iznos: <b>{amount:.4f}</b>\n"
+                        f"💰 Cena: <b>${usd_price:.6f}</b>\n"
+                        f"📊 Ukupno: <b>${total_value:.2f}</b>"
+                    )
+                    send_telegram_message(message)
+                else:
+                    print(f"Preskačem token ispod $100: {total_value:.2f}")
                 break
 
     if not found:
