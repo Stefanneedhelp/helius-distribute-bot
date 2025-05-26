@@ -15,18 +15,16 @@ def send_telegram_message(message):
     try:
         requests.post(url, json=payload)
     except Exception as e:
-        print("Greška pri slanju poruke:", e)
+        print("❌ Greška pri slanju poruke:", e)
 
 def get_token_price(mint_address):
-    url = DEXSCREENER_API + mint_address
     try:
-        response = requests.get(url)
-        data = response.json()
-        if data.get("pairs"):
-            price = data["pairs"][0]["priceUsd"]
-            return float(price)
+        res = requests.get(DEXSCREENER_API + mint_address)
+        data = res.json()
+        if "pairs" in data and data["pairs"]:
+            return float(data["pairs"][0]["priceUsd"])
     except Exception as e:
-        print("Greška pri dobijanju cene:", e)
+        print("❌ Greška u dohvatanju cene:", e)
     return None
 
 @app.route("/", methods=["POST"])
@@ -35,11 +33,16 @@ def webhook():
     print("📥 Stigao payload:", payload)
 
     if not MONITORED_MINT:
-        print("❌ Nema definisane mint adrese.")
+        print("❌ Mint adresa nije definisana.")
         return jsonify({"error": "No mint address set"}), 400
 
     found = False
     for tx in payload:
+        logs = tx.get("meta", {}).get("logMessages", [])
+        if not any("Instruction: Swap" in log for log in logs):
+            print("⏩ Preskačem: nije swap.")
+            continue  # nije SWAP
+
         balances = tx.get("meta", {}).get("postTokenBalances", [])
         for balance in balances:
             mint = balance.get("mint")
@@ -54,23 +57,23 @@ def webhook():
                     continue
 
                 total_value = amount * usd_price
-                print(f"🔍 Transakcija za {amount:.4f} tokena × ${usd_price:.6f} = ${total_value:.2f}")
+                print(f"💱 SWAP za {amount:.4f} × ${usd_price:.6f} = ${total_value:.2f}")
 
                 if total_value >= 100:
-                    message = (
-                        f"💸 Transakcija iznad $100:\n"
-                        f"<b>{mint}</b>\n\n"
-                        f"📦 Iznos: <b>{amount:.4f}</b>\n"
-                        f"💰 Cena: <b>${usd_price:.6f}</b>\n"
-                        f"📊 Ukupno: <b>${total_value:.2f}</b>"
+                    msg = (
+                        f"🔁 <b>SWAP transakcija preko $100</b>\n\n"
+                        f"<b>Token:</b> {mint}\n"
+                        f"<b>Iznos:</b> {amount:.4f}\n"
+                        f"<b>Cena:</b> ${usd_price:.6f}\n"
+                        f"<b>Ukupno:</b> ${total_value:.2f}"
                     )
-                    send_telegram_message(message)
+                    send_telegram_message(msg)
                 else:
-                    print(f"Preskačem token ispod $100: {total_value:.2f}")
+                    print(f"⏬ Swap ispod $100: {total_value:.2f}")
                 break
 
     if not found:
-        print("⚠️ Nema relevantnih transakcija za mint:", MONITORED_MINT)
+        print("⚠️ Nije pronađena relevantna transakcija za mint:", MONITORED_MINT)
 
     return jsonify({"status": "ok"}), 200
 
