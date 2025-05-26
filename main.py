@@ -1,9 +1,8 @@
 import os
-from flask import Flask, request
+import json
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
+from flask import Flask, request
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -12,82 +11,80 @@ CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
 
-def get_token_price(mint_address):
-    try:
-        url = f"{DEXSCREENER_API}{mint_address}"
-        response = requests.get(url)
-        data = response.json()
-        if "pairs" in data and len(data["pairs"]) > 0:
-            price_usd = float(data["pairs"][0]["priceUsd"])
-            return price_usd
-    except Exception as e:
-        print(f"❌ Greška u dohvatanju cene: {e}")
-    return None
+TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-def send_telegram_message(message):
+
+def send_telegram_message(text):
+    data = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    response = requests.post(TELEGRAM_URL, json=data)
+    print("[TELEGRAM]", response.status_code, response.text)
+
+
+def fetch_token_price(mint):
     try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
-        response = requests.post(url, json=payload)
-        print(f"✅ Poslata poruka: {response.status_code}")
-    except Exception as e:
-        print(f"❌ Greška u slanju poruke: {e}")
+        response = requests.get(DEXSCREENER_API + mint)
+        data = response.json()
+        return float(data["pairs"][0]["priceUsd"])
+    except:
+        return 0.0
+
 
 @app.route("/", methods=["POST"])
-def webhook():
+def handle_webhook():
     payload = request.json
-    print(f"📥 Stigao payload: {payload}")
+    print("\U0001F4E5 Stigao payload:", json.dumps(payload, indent=2))
 
-    for tx in payload:
-        logs = tx.get("meta", {}).get("logMessages", [])
-        if not any("Instruction: Swap" in log for log in logs):
-            print("⏩ Preskačem: nije swap.")
+    for tx_data in payload:
+        if "meta" not in tx_data or "postTokenBalances" not in tx_data["meta"]:
             continue
 
-        post_balances = tx.get("meta", {}).get("postTokenBalances", [])
-        pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
+        pre_token_balances = tx_data["meta"].get("preTokenBalances", [])
+        post_token_balances = tx_data["meta"].get("postTokenBalances", [])
+        pre_token_balances_by_index = {
+            b["accountIndex"]: b for b in pre_token_balances
+        }
 
-        for post in post_balances:
-            if post.get("mint") != MONITORED_MINT:
+        for token in post_token_balances:
+            if token.get("mint") != MONITORED_MINT:
                 continue
 
-            owner = post.get("owner")
-            decimals = int(post["uiTokenAmount"]["decimals"])
-            post_amount = int(post["uiTokenAmount"]["amount"])
+            account_index = token["accountIndex"]
+            new_amount = float(token["uiTokenAmount"]["uiAmount"])
+            old_amount = float(pre_token_balances_by_index.get(account_index, {"uiTokenAmount": {"uiAmount": 0}})["uiTokenAmount"]["uiAmount"])
+            amount_diff = new_amount - old_amount
 
-            # Nađi pre amount za istog ownera
-            pre_amount = 0
-            for pre in pre_balances:
-                if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
-                    pre_amount = int(pre["uiTokenAmount"]["amount"])
-                    break
-
-            delta = abs(post_amount - pre_amount) / (10 ** decimals)
-            usd_price = get_token_price(MONITORED_MINT)
-
-            if usd_price is None:
-                print("❌ Nema cene.")
+            if amount_diff == 0:
                 continue
 
-            value_usd = delta * usd_price
-            print(f"📊 Transakcija: Δ{delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
+            tx_type = "BUY ✅" if amount_diff > 0 else "SELL \U0001F53B"
+            readable_time = datetime.utcfromtimestamp(tx_data["blockTime"]).strftime('%Y-%m-%d %H:%M:%S UTC')
 
-            if value_usd >= 100:
-                msg = (
-                    f"🔁 <b>SWAP transakcija preko $100</b>\n\n"
-                    f"<b>Token:</b> {MONITORED_MINT}\n"
-                    f"<b>Promena:</b> {delta:.4f}\n"
-                    f"<b>Cena:</b> ${usd_price:.4f}\n"
-                    f"<b>Ukupno:</b> ${value_usd:.2f}"
-                )
-                send_telegram_message(msg)
-            else:
-                print(f"⏬ Swap ispod $100: ${value_usd:.2f}")
+            price = fetch_token_price(MONITORED_MINT)
+            usd_value = abs(amount_diff * price)
 
-    return "OK", 200
+            if usd_value < 100:
+                print(f"Preskačem token ispod $100: {usd_value:.4f}")
+                continue
+
+            message = f"""
+📈 <b>{tx_type}</b> of <b>{abs(amount_diff):,.4f} tokens</b>
+💸 Value: <b>${usd_value:,.2f}</b>
+🕒 Time: <code>{readable_time}</code>
+🔗 <a href='https://dexscreener.com/solana/{MONITORED_MINT}'>DEX View</a>
+"""
+            send_telegram_message(message.strip())
+
+    return "ok"
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=10000)
+
 
 
 
