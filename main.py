@@ -49,8 +49,8 @@ def webhook():
             print("Greška kod preuzimanja cene sa DexScreener-a.")
             continue
 
-        if price < 1:
-            print(f"Preskačem token ispod $1: {price}")
+        if price < 100:
+            print(f"Preskačem token ispod $100: {price}")
             continue
 
         msg = f"📈 Detektovana transakcija za token:\nMint: {mint}\nCena: ${price:.4f}"
