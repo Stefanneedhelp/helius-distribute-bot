@@ -1,3 +1,4 @@
+
 import os
 import requests
 from flask import Flask, request, jsonify
@@ -32,15 +33,23 @@ def handle_webhook():
     for tx in data:
         try:
             mint_addresses = [b['mint'] for b in tx['meta']['postTokenBalances']]
+            print("Mint adrese u transakciji:", mint_addresses)
+
             if MONITORED_MINT not in mint_addresses:
+                print("MONITORED_MINT nije pronadjen u ovoj transakciji.")
                 continue
+
+            print("Mint adresa pogodjena:", MONITORED_MINT)
 
             tx_type = 'Kupovina' if 'Buy' in str(tx['meta'].get('logMessages', [])) else 'Prodaja'
             signature = tx['transaction']['signatures'][0]
 
             token_info = next((b for b in tx['meta']['postTokenBalances'] if b['mint'] == MONITORED_MINT), None)
             if not token_info:
+                print("Token info nije pronadjen za mint.")
                 continue
+
+            print("Token info:", token_info)
 
             ui_amount = token_info['uiTokenAmount'].get('uiAmount', 0)
 
@@ -48,7 +57,8 @@ def handle_webhook():
             token_price_in_sol = estimate_token_price(tx)
             total_usd = round(ui_amount * sol_price * token_price_in_sol, 2)
 
-            if total_usd < 100:
+            if total_usd < 1:
+                print("Preskacem transakciju ispod $1:", total_usd)
                 continue
 
             message = (
@@ -69,6 +79,7 @@ def get_sol_price():
         res = requests.get("https://price.jup.ag/v4/price?ids=SOL")
         return res.json()['data']['SOL']['price']
     except:
+        print("Greska kod preuzimanja cene SOL-a.")
         return 0
 
 def estimate_token_price(tx):
@@ -85,11 +96,11 @@ def estimate_token_price(tx):
 
         return sol_amount / token_amount if token_amount else 0
     except:
+        print("Greska kod racunanja cene tokena.")
         return 0
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
-
 
 
 
