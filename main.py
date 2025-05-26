@@ -1,65 +1,68 @@
 import os
-import json
 import requests
-from flask import Flask, request
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
-MONITORED_MINT = os.getenv("MONITORED_MINT")  # opciono
+MONITORED_MINT = os.getenv("MONITORED_MINT")
 
-def send_message(text):
+def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text}
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         requests.post(url, json=payload)
     except Exception as e:
-        print(f"Greška pri slanju poruke: {e}")
+        print("Greška pri slanju poruke:", e)
 
 def get_token_price(mint_address):
+    url = DEXSCREENER_API + mint_address
     try:
-        response = requests.get(DEXSCREENER_API + mint_address)
+        response = requests.get(url)
         data = response.json()
-        if "pairs" in data and len(data["pairs"]) > 0:
-            return float(data["pairs"][0]["priceUsd"])
+        if data.get("pairs"):
+            price = data["pairs"][0]["priceUsd"]
+            return float(price)
     except Exception as e:
-        print(f"Greška kod preuzimanja cene: {e}")
+        print("Greška pri dobijanju cene:", e)
     return None
 
 @app.route("/", methods=["POST"])
 def webhook():
-    data = request.json
-    print("📥 Stigao payload:", json.dumps(data, indent=2))
+    payload = request.json
+    print("📥 Stigao payload:", payload)
 
-    try:
-        token_balances = data[0]["meta"]["postTokenBalances"]
-        mint_addresses = list({t["mint"] for t in token_balances})
-    except Exception as e:
-        print(f"Ne mogu da izvucem mint adrese: {e}")
-        return "OK"
+    if not MONITORED_MINT:
+        print("❌ Nema definisane mint adrese.")
+        return jsonify({"error": "No mint address set"}), 400
 
-    for mint in mint_addresses:
-        if MONITORED_MINT and mint != MONITORED_MINT:
-            continue
+    found = False
+    for tx in payload:
+        balances = tx.get("meta", {}).get("postTokenBalances", [])
+        for balance in balances:
+            mint = balance.get("mint")
+            if mint == MONITORED_MINT:
+                found = True
+                usd_price = get_token_price(mint)
+                print(f"Cena tokena: {usd_price}")
+                
+                message = (
+                    f"💸 Nova transakcija za token:\n"
+                    f"<b>{mint}</b>\n\n"
+                    f"📊 Vrednost: <b>${usd_price:.6f}</b>"
+                )
+                send_telegram_message(message)
+                break
 
-        price = get_token_price(mint)
-        if price is None:
-            print("Greška kod preuzimanja cene sa DexScreener-a.")
-            continue
+    if not found:
+        print("⚠️ Nema relevantnih transakcija za mint:", MONITORED_MINT)
 
-        if price < 100:
-            print(f"Preskačem token ispod $100: {price}")
-            continue
-
-        msg = f"📈 Detektovana transakcija za token:\nMint: {mint}\nCena: ${price:.4f}"
-        send_message(msg)
-
-    return "OK"
+    return jsonify({"status": "ok"}), 200
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=80)
+    app.run(debug=True, port=5000)
 
 
 
