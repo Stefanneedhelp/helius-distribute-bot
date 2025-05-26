@@ -1,106 +1,88 @@
-
 import os
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request
+from dotenv import load_dotenv
+from datetime import datetime
 
-app = Flask(__name__)
+load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 MONITORED_MINT = os.getenv("MONITORED_MINT")
 
-print("BOT_TOKEN:", BOT_TOKEN)
-print("CHAT_ID:", CHAT_ID)
-print("MONITORED_MINT:", MONITORED_MINT)
+app = Flask(__name__)
 
-API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+def get_token_price(mint_address):
+    try:
+        url = f"https://api.dexscreener.com/latest/dex/tokens/{mint_address}"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        if "pairs" in data and len(data["pairs"]) > 0:
+            return float(data["pairs"][0]["priceUsd"])
+    except Exception as e:
+        print(f"Greska kod preuzimanja cene tokena: {e}")
+    return None
 
 def send_telegram_message(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
         "text": message,
         "parse_mode": "HTML"
     }
-    print("Slanje poruke:", message)
-    response = requests.post(API_URL, json=payload)
-    print("📨 Telegram response:", response.status_code, response.text)
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+    except Exception as e:
+        print(f"Greska kod slanja poruke na Telegram: {e}")
 
-@app.route('/', methods=['POST'])
+@app.route("/", methods=["POST"])
 def handle_webhook():
     data = request.get_json()
-    print("📥 Stigao payload:", data)
+    print(f"📥 Stigao payload: {data}")
 
-    for tx in data:
-        try:
-            mint_addresses = [b['mint'] for b in tx['meta']['postTokenBalances']]
-            print("Mint adrese u transakciji:", mint_addresses)
+    token_balances = data[0].get("meta", {}).get("postTokenBalances", [])
+    mint_addresses = [t.get("mint") for t in token_balances]
 
-            if MONITORED_MINT not in mint_addresses:
-                print("MONITORED_MINT nije pronadjen u ovoj transakciji.")
-                continue
+    if MONITORED_MINT in mint_addresses:
+        token_info = next((t for t in token_balances if t.get("mint") == MONITORED_MINT), None)
+        if token_info:
+            amount_raw = int(token_info["uiTokenAmount"]["amount"])
+            decimals = int(token_info["uiTokenAmount"]["decimals"])
+            amount = amount_raw / (10 ** decimals)
 
-            print("Mint adresa pogodjena:", MONITORED_MINT)
+            price = get_token_price(MONITORED_MINT)
+            if price is None:
+                print("Greska kod preuzimanja cene.")
+                return "", 200
 
-            tx_type = 'Kupovina' if 'Buy' in str(tx['meta'].get('logMessages', [])) else 'Prodaja'
-            signature = tx['transaction']['signatures'][0]
+            total_value = amount * price
+            if total_value < 1:
+                print(f"Preskacem transakciju ispod $1: {total_value}")
+                return "", 200
 
-            token_info = next((b for b in tx['meta']['postTokenBalances'] if b['mint'] == MONITORED_MINT), None)
-            if not token_info:
-                print("Token info nije pronadjen za mint.")
-                continue
+            timestamp = data[0].get("blockTime")
+            if timestamp:
+                dt = datetime.utcfromtimestamp(timestamp)
+                formatted_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                formatted_time = "Nepoznat"
 
-            print("Token info:", token_info)
-
-            ui_amount = token_info['uiTokenAmount'].get('uiAmount', 0)
-
-            sol_price = get_sol_price()
-            token_price_in_sol = estimate_token_price(tx)
-            total_usd = round(ui_amount * sol_price * token_price_in_sol, 2)
-
-            if total_usd < 1:
-                print("Preskacem transakciju ispod $1:", total_usd)
-                continue
-
-            message = (
-                f"\U0001F4E2 Nova transakcija!\n\n"
-                f"Tip: {tx_type}\n"
-                f"Iznos: {total_usd} USD\n"
-                f"Signature: {signature}"
+            msg = (
+                f"📡 <b>Nova transakcija!</b>\n\n"
+                f"🪙 <b>Token:</b> <code>{MONITORED_MINT}</code>\n"
+                f"💰 <b>Iznos:</b> {amount:.4f}\n"
+                f"💵 <b>Vrednost:</b> ${total_value:.2f}\n"
+                f"🕒 <b>Vreme:</b> {formatted_time} UTC"
             )
-            send_telegram_message(message)
+            send_telegram_message(msg)
 
-        except Exception as e:
-            print("Greška pri obradi transakcije:", e)
+    return "", 200
 
-    return jsonify({"status": "ok"})
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)
 
-def get_sol_price():
-    try:
-        res = requests.get("https://price.jup.ag/v4/price?ids=SOL")
-        return res.json()['data']['SOL']['price']
-    except:
-        print("Greska kod preuzimanja cene SOL-a.")
-        return 0
-
-def estimate_token_price(tx):
-    try:
-        post = tx['meta']['postTokenBalances']
-        sol_amount = 0
-        token_amount = 0
-
-        for b in post:
-            if b['mint'] == MONITORED_MINT:
-                token_amount = b['uiTokenAmount']['uiAmount']
-            if b['mint'] == "So11111111111111111111111111111111111111112":
-                sol_amount = b['uiTokenAmount']['uiAmount']
-
-        return sol_amount / token_amount if token_amount else 0
-    except:
-        print("Greska kod racunanja cene tokena.")
-        return 0
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
 
 
 
