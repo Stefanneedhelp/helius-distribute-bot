@@ -1,44 +1,67 @@
 
-import os 
-import requests 
 from flask import Flask, request
+import os
+import requests
 
-app = Flask(name)
+app = Flask(__name__)
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN") TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID") MONITORED_TOKEN = "2AEU9yWk3dEGnVwRaKv4div5TarC4dn7axFLyz6zG4Pf"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+MONITORED_MINT = "2AEU9yWk3dEGnVwRaKv4div5TarC4dn7axFLyz6zG4Pf"
 
-Jupiter program ID
+@app.route("/", methods=["POST"])
+def handle_webhook():
+    data = request.json
+    if not data:
+        return "No data", 400
 
-JUPITER_PROGRAM_ID = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4"
+    print("📥 Stigao payload:", data)
 
-@app.route("/", methods=["POST"]) def handle_webhook(): data = request.json if not data: return "No data", 400
+    for tx in data:
+        try:
+            token_balance_changes = tx["meta"].get("postTokenBalances", [])
+            instructions = tx["meta"].get("logMessages", [])
 
-for tx in data:
-    try:
-        logs = tx.get("meta", {}).get("logMessages", [])
-        instructions = tx.get("meta", {}).get("innerInstructions", [])
-        post_balances = tx.get("meta", {}).get("postTokenBalances", [])
-        pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
-        program_ids = [ix.get("programIdIndex") for i in instructions for ix in i.get("instructions", [])]
+            # Pronađi promenu balansa za posmatrani token
+            for balance in token_balance_changes:
+                if balance["mint"] == MONITORED_MINT:
+                    ui_amount = float(balance["uiTokenAmount"]["uiAmount"])
+                    if ui_amount is None or ui_amount < 0.01:
+                        continue  # ignoriši male transakcije
 
-        # Provera da li je Jupiter swap
-        if not any(JUPITER_PROGRAM_ID in l for l in logs):
-            continue
+                    # Transakcije ispod 100 USD ignoriši
+                    if ui_amount < 100:
+                        continue
 
-        # Pronadji vrednosti tokena pre i posle
-        pre_amount = next((float(p["uiTokenAmount"]["uiAmount"]) for p in pre_balances if p["mint"] == MONITORED_TOKEN), 0)
-        post_amount = next((float(p["uiTokenAmount"]["uiAmount"]) for p in post_balances if p["mint"] == MONITORED_TOKEN), 0)
-        delta = round(post_amount - pre_amount, 6)
+                    # Odredi tip transakcije
+                    tx_type = "Kupovina" if "Instruction: Buy" in str(instructions) else "Prodaja" if "Instruction: Sell" in str(instructions) else "Transfer"
 
-        # Provera da li je delta veci od 100$ (pretpostavka 1 token = 1 USD ako nemamo oracle)
-        if abs(delta) < 100:
-            continue
+                    # Pošalji poruku
+                    signature = tx["transaction"]["signatures"][0]
+                    message = (
+                        f"📢 Nova transakcija!\n\n"
+                        f"Tip: {tx_type}\n"
+                        f"Iznos: {ui_amount:.2f} USD\n"
+                        f"Signature: {signature}"
+                    )
+                    send_telegram_message(message)
+        except Exception as e:
+            print("Greška:", e)
 
-        direction = "Kupovina" if delta > 0 else "Prodaja"
+    return "OK", 200
 
-        message = (
-            f"\ud83d\
+def send_telegram_message(message):
+    if not BOT_TOKEN or not CHAT_ID:
+        print("BOT_TOKEN ili CHAT_ID nisu postavljeni.")
+        return
 
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message}
+    response = requests.post(url, json=payload)
+    print("📨 Telegram response:", response.status_code, response.text)
+
+if __name__ == "__main__":
+    app.run(debug=True)
 
 
 
