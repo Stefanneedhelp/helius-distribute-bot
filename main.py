@@ -62,7 +62,8 @@ def webhook():
                     pre_amount = int(pre["uiTokenAmount"]["amount"])
                     break
 
-            delta = abs(post_amount - pre_amount) / (10 ** decimals)
+            delta_raw = post_amount - pre_amount
+            delta = abs(delta_raw) / (10 ** decimals)
             usd_price = get_token_price(MONITORED_MINT)
 
             if usd_price is None:
@@ -70,19 +71,17 @@ def webhook():
                 continue
 
             value_usd = delta * usd_price
-            print(f"📊 Transakcija: Δ{delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
+            direction = "BUY" if delta_raw > 0 else "SELL"
+            print(f"📊 {direction} {delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
 
-            if value_usd >= 500:
+            if value_usd >= 100:
                 msg = (
-                    f"🔁 <b>SWAP transakcija preko $500</b>\n\n"
-                    f"<b>Token:</b> {MONITORED_MINT}\n"
-                    f"<b>Promena:</b> {delta:.4f}\n"
-                    f"<b>Cena:</b> ${usd_price:.4f}\n"
-                    f"<b>Ukupno:</b> ${value_usd:.2f}"
+                    f"🔁 <b>{direction} ${value_usd:,.2f}</b>\n"
+                    f"{tx.get('blockTime', '')}"
                 )
                 send_telegram_message(msg)
             else:
-                print(f"⏬ Swap ispod $100: ${value_usd:.2f}")
+                print(f"⏬ Preskačem ispod $100: {value_usd}")
 
     return "OK", 200
 
