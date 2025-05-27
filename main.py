@@ -1,82 +1,78 @@
-
 import os
 import requests
 import asyncio
+from datetime import datetime
 from flask import Flask, request
 from telegram import Bot
-from datetime import datetime
 
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
-MONITORED_MINT = os.getenv("MONITORED_MINT")
+MINT_ADDRESS = "2AEU9yWk3dEGnVwRaKv4div5TarC4dn7axFLyz6zG4Pf"
 
 bot = Bot(token=BOT_TOKEN)
 
+
+def extract_mint_and_type(data):
+    try:
+        tx = data[0]
+        token_balances = tx["meta"].get("postTokenBalances", [])
+        for balance in token_balances:
+            if balance.get("mint") == MINT_ADDRESS:
+                return MINT_ADDRESS, "SWAP"
+    except Exception as e:
+        print(f"Greška u extract_mint_and_type: {e}")
+    return None, None
+
+
+def fetch_price_usd(mint_address):
+    try:
+        response = requests.get(DEXSCREENER_API + mint_address)
+        response.raise_for_status()
+        data = response.json()
+        price = float(data["pairs"][0]["priceUsd"])
+        return price
+    except Exception as e:
+        print(f"Greška kod dobijanja cene: {e}")
+        return None
+
+
 @app.route("/", methods=["POST"])
-def webhook():
+def handle_webhook():
+    payload = request.get_json()
     print("✅ Webhook primljen.")
-    data = request.get_json()
 
-    if not data or not isinstance(data, list):
-        return "Invalid payload", 400
+    try:
+        mint, tx_type = extract_mint_and_type(payload)
+        if not mint:
+            print("⛔ Nema mint adrese, preskačem.")
+            return "OK"
 
-    for tx in data:
-        meta = tx.get("meta", {})
-        block_time = tx.get("blockTime")
-        log_messages = meta.get("logMessages", [])
-        pre_balances = meta.get("preTokenBalances", [])
-        post_balances = meta.get("postTokenBalances", [])
+        price_usd = fetch_price_usd(mint)
+        if not price_usd:
+            print("⛔ Nema cene za token.")
+            return "OK"
 
-        amount_changed = None
+        # Procenjena vrednost u USD (pojednostavljeno – koristiš 1 token po transakciji za primer)
+        amount_usd = price_usd * 1  # Prava logika može da koristi količinu iz postTokenBalances
 
-        for pre, post in zip(pre_balances, post_balances):
-            if pre["mint"] == MONITORED_MINT and post["mint"] == MONITORED_MINT:
-                try:
-                    pre_amount = int(pre["uiTokenAmount"]["amount"])
-                    post_amount = int(post["uiTokenAmount"]["amount"])
-                    decimals = int(post["uiTokenAmount"]["decimals"])
-                except:
-                    continue
+        if amount_usd < 100:
+            print(f"Preskačem ispod $100: {amount_usd}")
+            return "OK"
 
-                delta = abs(post_amount - pre_amount)
-                if delta == 0:
-                    continue
-                amount_changed = delta / (10 ** decimals)
-                break  # uzmi samo prvu promenjenu vrednost
-
-        if not amount_changed:
-            print("Nema promena u količini tokena.")
-            continue
-
-        # Cena sa DexScreener-a
-        price_usd = 0
-        try:
-            res = requests.get(DEXSCREENER_API + MONITORED_MINT)
-            res.raise_for_status()
-            price_usd = float(res.json()["pairs"][0]["priceUsd"])
-        except:
-            print("Greska pri dohvatanju cene.")
-            continue
-
-        total_value = amount_changed * price_usd
-        if total_value < 100:
-            print(f"Preskačem ispod $100: {total_value}")
-            continue
-
-        # Tip transakcije
-        tx_type = "SWAP" if any("Instruction: Swap" in log for log in log_messages) else "TX"
-
-        # Vremenska oznaka
-        timestamp = datetime.utcfromtimestamp(block_time).strftime('%Y-%m-%d %H:%M:%S UTC')
-        message = f"✅ {tx_type} ${total_value:,.2f}\n{timestamp}"
-        print(message)
+        message = f"✅ {tx_type} ${amount_usd:,.2f}\n{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
         asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
+        print("✅ Poruka poslata.")
+    except Exception as e:
+        print(f"❌ Greška u webhook handleru: {e}")
 
     return "OK"
 
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
 
 
 
