@@ -2,6 +2,7 @@ import os
 from flask import Flask, request
 import requests
 from dotenv import load_dotenv
+from datetime import datetime
 
 load_dotenv()
 
@@ -18,8 +19,7 @@ def get_token_price(mint_address):
         response = requests.get(url)
         data = response.json()
         if "pairs" in data and len(data["pairs"]) > 0:
-            price_usd = float(data["pairs"][0]["priceUsd"])
-            return price_usd
+            return float(data["pairs"][0]["priceUsd"])
     except Exception as e:
         print(f"❌ Greška u dohvatanju cene: {e}")
     return None
@@ -36,7 +36,7 @@ def send_telegram_message(message):
 @app.route("/", methods=["POST"])
 def webhook():
     payload = request.json
-    print(f"📥 Stigao payload: {payload}")
+    print("✅ Webhook primljen.")
 
     for tx in payload:
         logs = tx.get("meta", {}).get("logMessages", [])
@@ -46,6 +46,8 @@ def webhook():
 
         post_balances = tx.get("meta", {}).get("postTokenBalances", [])
         pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
+        timestamp = tx.get("blockTime", 0)
+        time_str = datetime.utcfromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         for post in post_balances:
             if post.get("mint") != MONITORED_MINT:
@@ -55,7 +57,7 @@ def webhook():
             decimals = int(post["uiTokenAmount"]["decimals"])
             post_amount = int(post["uiTokenAmount"]["amount"])
 
-            # Nađi pre amount za istog ownera
+            # Traži prethodno stanje za istog vlasnika
             pre_amount = 0
             for pre in pre_balances:
                 if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
@@ -72,16 +74,16 @@ def webhook():
 
             value_usd = delta * usd_price
             direction = "BUY" if delta_raw > 0 else "SELL"
-            print(f"📊 {direction} {delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
 
             if value_usd >= 100:
                 msg = (
                     f"🔁 <b>{direction} ${value_usd:,.2f}</b>\n"
-                    f"{tx.get('blockTime', '')}"
+                    f"<b>Adresa:</b> <code>{owner}</code>\n"
+                    f"<b>Vreme:</b> {time_str}"
                 )
                 send_telegram_message(msg)
             else:
-                print(f"⏬ Preskačem ispod $100: {value_usd}")
+                print(f"⏬ Preskačem ispod $100: {value_usd:.2f}")
 
     return "OK", 200
 
