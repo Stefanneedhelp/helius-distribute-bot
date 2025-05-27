@@ -7,61 +7,70 @@ from datetime import datetime
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
-DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
+DEX_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MIN_USD = 100
 
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
 
-def get_token_price(mint):
+def get_price_usd(mint):
     try:
-        res = requests.get(DEXSCREENER_API + mint)
-        data = res.json()
+        r = requests.get(DEX_API + mint)
+        data = r.json()
         return float(data["pairs"][0]["priceUsd"])
     except Exception as e:
-        print(f"Greška pri dohvatanju cene za {mint}: {e}")
-        return 0
+        print("Greška u dohvatu cene:", e)
+        return None
 
 def is_swap(logs):
     return any("Swap" in log for log in logs)
 
 @app.route("/", methods=["POST"])
 def webhook():
-    payload = request.json
+    data = request.json
     print("✅ Webhook primljen.")
-
     try:
-        tx = payload[0]
+        tx = data[0]
         logs = tx["meta"].get("logMessages", [])
         if not is_swap(logs):
-            print("❌ Nije swap transakcija.")
+            print("❌ Nije swap.")
             return "OK"
 
-        token_balances = tx["meta"].get("postTokenBalances", [])
-        for token in token_balances:
-            mint = token.get("mint")
-            amount = token.get("uiTokenAmount", {}).get("uiAmount", 0)
+        token = next((t for t in tx["meta"]["postTokenBalances"] if t.get("mint")), None)
+        if not token:
+            print("❌ Nema mint adrese.")
+            return "OK"
 
-            if mint and amount:
-                price = get_token_price(mint)
-                usd_value = amount * price
+        mint = token["mint"]
+        amount = float(token["uiTokenAmount"]["uiAmount"])
+        price = get_price_usd(mint)
+        if price is None:
+            return "OK"
 
-                if usd_value < MIN_USD:
-                    print(f"Preskačem ispod $100: {usd_value}")
-                    continue
+        usd_value = amount * price
+        if usd_value < MIN_USD:
+            print(f"Preskačem ispod $100: {usd_value}")
+            return "OK"
 
-                timestamp = datetime.utcfromtimestamp(tx["blockTime"]).strftime("%Y-%m-%d %H:%M:%S UTC")
-                message = f"✅ SWAP ${usd_value:,.2f}\n{timestamp}"
+        # BUY/SELL logika
+        account_index = token["accountIndex"]
+        pre = next((p for p in tx["meta"]["preTokenBalances"] if p["accountIndex"] == account_index), None)
+        if not pre:
+            action = "TRADE"
+        else:
+            pre_amount = float(pre["uiTokenAmount"]["uiAmount"])
+            action = "BUY" if amount > pre_amount else "SELL"
 
-                asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
-                print("✅ Šaljem poruku:", message)
-                break
+        timestamp = datetime.utcfromtimestamp(tx["blockTime"]).strftime("%Y-%m-%d %H:%M:%S UTC")
+        message = f"{action} ${usd_value:,.2f}\n{timestamp}"
+
+        asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
+        print("✅ Poslata poruka:", message)
 
     except Exception as e:
         print("❌ Greška:", e)
 
     return "OK"
-
 
 
 
