@@ -1,7 +1,8 @@
 import os
 import requests
-import telegram
+import asyncio
 from flask import Flask, request
+from telegram import Bot
 from datetime import datetime
 
 app = Flask(__name__)
@@ -11,72 +12,54 @@ CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
 
-bot = telegram.Bot(token=BOT_TOKEN)
-
-def get_token_price(mint_address):
-    try:
-        response = requests.get(DEXSCREENER_API + mint_address)
-        data = response.json()
-        price = float(data["pairs"][0]["priceUsd"])
-        return price
-    except Exception as e:
-        print(f"[DEX Screener] Greška: {e}")
-        return None
+bot = Bot(token=BOT_TOKEN)
 
 @app.route("/", methods=["POST"])
 def webhook():
     print("✅ Webhook primljen.")
-    try:
-        payload = request.json
-        print("📥 Stigao payload:", payload)
+    data = request.get_json()
 
-        for tx in payload:
-            instructions = tx.get("meta", {}).get("logMessages", [])
-            if not any("Instruction: Swap" in msg for msg in instructions):
-                print("⛔ Preskačem jer nije SWAP transakcija")
-                continue
+    if not data or not isinstance(data, list):
+        return "Invalid payload", 400
 
-            post_token_balances = tx.get("meta", {}).get("postTokenBalances", [])
-            mint_addresses = [b.get("mint") for b in post_token_balances if b.get("mint")]
+    for tx in data:
+        tx_data = tx.get("meta", {})
+        token_balances = tx_data.get("postTokenBalances", [])
+        tx_type = None
 
-            if MONITORED_MINT not in mint_addresses:
-                print("⛔ Preskačem jer nema traženog mint-a")
-                continue
+        for balance in token_balances:
+            if balance.get("mint") == MONITORED_MINT:
+                amount = int(balance["uiTokenAmount"]["amount"])
+                decimals = int(balance["uiTokenAmount"]["decimals"])
+                ui_amount = amount / (10 ** decimals)
+                if ui_amount < 0.01:
+                    continue  # preskoči beznačajne
 
-            price = get_token_price(MONITORED_MINT)
-            if not price:
-                print("⛔ Preskačem jer nema cene sa DEX Screenera")
-                continue
+                # Get USD price
+                response = requests.get(DEXSCREENER_API + MONITORED_MINT)
+                price = 0
+                if response.ok:
+                    try:
+                        price = float(response.json()["pairs"][0]["priceUsd"])
+                    except (KeyError, IndexError, ValueError):
+                        pass
 
-            amount_raw = max([
-                int(b["uiTokenAmount"]["amount"])
-                for b in post_token_balances
-                if b.get("mint") == MONITORED_MINT
-            ], default=0)
+                total_value = ui_amount * price
+                if total_value < 100:
+                    print(f"Preskačem token ispod $100: {total_value}")
+                    continue
 
-            decimals = next((int(b["uiTokenAmount"]["decimals"]) for b in post_token_balances if b.get("mint") == MONITORED_MINT), 9)
-            amount = amount_raw / (10 ** decimals)
-            usd_value = amount * price
+                # Detekcija tipa transakcije (samo SWAP)
+                logs = tx_data.get("logMessages", [])
+                tx_type = "SWAP" if any("Instruction: Swap" in msg for msg in logs) else None
 
-            if usd_value < 100:
-                print(f"⛔ Preskačem ispod $100: {usd_value:.2f}")
-                continue
+                if tx_type:
+                    timestamp = datetime.utcfromtimestamp(tx["blockTime"]).strftime('%Y-%m-%d %H:%M:%S UTC')
+                    message = f"✅ {tx_type} ${total_value:,.2f}\n{timestamp}"
+                    print(message)
+                    asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
 
-            timestamp = datetime.utcfromtimestamp(tx["blockTime"]).strftime("%Y-%m-%d %H:%M:%S UTC")
-            tx_type = "BUY" if any("Instruction: Buy" in msg for msg in instructions) else (
-                      "SELL" if any("Instruction: Sell" in msg for msg in instructions) else "SWAP")
-
-            message = f"{tx_type} ${usd_value:.2f}\n{timestamp}"
-            print("✅ Šaljem poruku:", message)
-            bot.send_message(chat_id=CHAT_ID, text=message)
-
-    except Exception as e:
-        print("Greška u obradi webhook-a:", e)
-    return "OK", 200
-
-if __name__ == "__main__":
-    app.run(debug=True)
-
+    return "OK"
 
 
 
