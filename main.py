@@ -75,7 +75,7 @@ def webhook():
             value_usd = delta * usd_price
             direction = "BUY" if delta_raw > 0 else "SELL"
 
-            if value_usd >= 100:
+            if value_usd >= 1000:
                 msg = (
                     f"🔁 <b>{direction} ${value_usd:,.2f}</b>\n"
                     f"<b>Adresa:</b> <code>{owner}</code>\n"
