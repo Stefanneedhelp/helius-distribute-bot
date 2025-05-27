@@ -1,8 +1,9 @@
+
 import os
-from flask import Flask, request
 import requests
+from flask import Flask, request
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 load_dotenv()
 
@@ -13,16 +14,19 @@ CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
 
+
 def get_token_price(mint_address):
     try:
         url = f"{DEXSCREENER_API}{mint_address}"
         response = requests.get(url)
         data = response.json()
         if "pairs" in data and len(data["pairs"]) > 0:
-            return float(data["pairs"][0]["priceUsd"])
+            price_usd = float(data["pairs"][0]["priceUsd"])
+            return price_usd
     except Exception as e:
         print(f"❌ Greška u dohvatanju cene: {e}")
     return None
+
 
 def send_telegram_message(message):
     try:
@@ -33,10 +37,11 @@ def send_telegram_message(message):
     except Exception as e:
         print(f"❌ Greška u slanju poruke: {e}")
 
+
 @app.route("/", methods=["POST"])
 def webhook():
     payload = request.json
-    print("✅ Webhook primljen.")
+    print(f"✅ Webhook primljen.")
 
     for tx in payload:
         logs = tx.get("meta", {}).get("logMessages", [])
@@ -46,8 +51,9 @@ def webhook():
 
         post_balances = tx.get("meta", {}).get("postTokenBalances", [])
         pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
-        timestamp = tx.get("blockTime", 0)
-        time_str = datetime.utcfromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S UTC")
+        block_time = tx.get("blockTime")
+        timestamp = datetime.fromtimestamp(block_time, tz=timezone.utc) + timedelta(hours=2)
+        formatted_time = timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
         for post in post_balances:
             if post.get("mint") != MONITORED_MINT:
@@ -57,38 +63,45 @@ def webhook():
             decimals = int(post["uiTokenAmount"]["decimals"])
             post_amount = int(post["uiTokenAmount"]["amount"])
 
-            # Traži prethodno stanje za istog vlasnika
             pre_amount = 0
             for pre in pre_balances:
                 if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
                     pre_amount = int(pre["uiTokenAmount"]["amount"])
                     break
 
-            delta_raw = post_amount - pre_amount
-            delta = abs(delta_raw) / (10 ** decimals)
+            delta = (post_amount - pre_amount) / (10 ** decimals)
             usd_price = get_token_price(MONITORED_MINT)
 
             if usd_price is None:
                 print("❌ Nema cene.")
                 continue
 
-            value_usd = delta * usd_price
-            direction = "BUY" if delta_raw > 0 else "SELL"
+            value_usd = abs(delta * usd_price)
+            print(f"📊 Transakcija: Δ{delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
 
-            if value_usd >= 1000:
-                msg = (
-                    f"🔁 <b>{direction} ${value_usd:,.2f}</b>\n"
-                    f"<b>Adresa:</b> <code>{owner}</code>\n"
-                    f"<b>Vreme:</b> {time_str}"
+            if value_usd >= 500:
+                action = "BUY" if delta > 0 else "SELL"
+                main_msg = (
+                    f"🔁 <b>SWAP transakcija preko $500</b>\n\n"
+                    f"<b>Token:</b> {MONITORED_MINT}\n"
+                    f"<b>Promena:</b> {abs(delta):.4f}\n"
+                    f"<b>Cena:</b> ${usd_price:.4f}\n"
+                    f"<b>Ukupno:</b> ${value_usd:,.2f}"
                 )
-                send_telegram_message(msg)
+                send_telegram_message(main_msg)
+
+                detail_msg = f"<b>{action}</b> ${value_usd:,.2f}\n{formatted_time}\n{owner}"
+                send_telegram_message(detail_msg)
             else:
-                print(f"⏬ Preskačem ispod $100: {value_usd:.2f}")
+                print(f"⏬ Swap ispod $500: ${value_usd:.2f}")
 
     return "OK", 200
 
+
 if __name__ == "__main__":
     app.run(debug=True)
+
+
 
 
 
