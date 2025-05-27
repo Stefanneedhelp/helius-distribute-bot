@@ -72,9 +72,9 @@ def webhook():
             value_usd = delta * usd_price
             print(f"📊 Transakcija: Δ{delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
 
-            if value_usd >= 100:
+            if value_usd >= 500:
                 msg = (
-                    f"🔁 <b>SWAP transakcija preko $100</b>\n\n"
+                    f"🔁 <b>SWAP transakcija preko $500</b>\n\n"
                     f"<b>Token:</b> {MONITORED_MINT}\n"
                     f"<b>Promena:</b> {delta:.4f}\n"
                     f"<b>Cena:</b> ${usd_price:.4f}\n"
