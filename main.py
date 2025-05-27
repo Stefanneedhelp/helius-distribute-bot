@@ -13,18 +13,17 @@ MIN_USD = 100
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
 
-def get_swap_amount_usd(mint_address):
+def get_token_price(mint):
     try:
-        response = requests.get(DEXSCREENER_API + mint_address)
-        data = response.json()
-        price = float(data["pairs"][0]["priceUsd"])
-        return price
+        res = requests.get(DEXSCREENER_API + mint)
+        data = res.json()
+        return float(data["pairs"][0]["priceUsd"])
     except Exception as e:
-        print(f"Greška u DexScreener API pozivu: {e}")
+        print(f"Greška pri dohvatanju cene za {mint}: {e}")
         return 0
 
 def is_swap(logs):
-    return any("Swap" in msg for msg in logs)
+    return any("Swap" in log for log in logs)
 
 @app.route("/", methods=["POST"])
 def webhook():
@@ -41,8 +40,12 @@ def webhook():
         token_balances = tx["meta"].get("postTokenBalances", [])
         for token in token_balances:
             mint = token.get("mint")
-            if mint:
-                usd_value = get_swap_amount_usd(mint)
+            amount = token.get("uiTokenAmount", {}).get("uiAmount", 0)
+
+            if mint and amount:
+                price = get_token_price(mint)
+                usd_value = amount * price
+
                 if usd_value < MIN_USD:
                     print(f"Preskačem ispod $100: {usd_value}")
                     continue
@@ -53,8 +56,9 @@ def webhook():
                 asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
                 print("✅ Šaljem poruku:", message)
                 break
+
     except Exception as e:
-        print("❌ Greška u obradi transakcije:", e)
+        print("❌ Greška:", e)
 
     return "OK"
 
