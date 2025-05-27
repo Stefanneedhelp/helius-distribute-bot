@@ -1,3 +1,4 @@
+
 import os
 from flask import Flask, request
 from telegram import Bot
@@ -52,18 +53,8 @@ def webhook():
             print(f"Preskačem ispod $100: {usd_value}")
             return "OK"
 
-        # BUY/SELL logika
-        account_index = token["accountIndex"]
-        pre = next((p for p in tx["meta"]["preTokenBalances"] if p["accountIndex"] == account_index), None)
-        if not pre:
-            action = "TRADE"
-        else:
-            pre_amount = float(pre["uiTokenAmount"]["uiAmount"])
-            action = "BUY" if amount > pre_amount else "SELL"
-
         timestamp = datetime.utcfromtimestamp(tx["blockTime"]).strftime("%Y-%m-%d %H:%M:%S UTC")
-        message = f"{action} ${usd_value:,.2f}\n{timestamp}"
-
+        message = f"✅ TX ${usd_value:,.2f}\n{timestamp}"
         asyncio.run(bot.send_message(chat_id=CHAT_ID, text=message))
         print("✅ Poslata poruka:", message)
 
@@ -71,7 +62,6 @@ def webhook():
         print("❌ Greška:", e)
 
     return "OK"
-
 
 
 
