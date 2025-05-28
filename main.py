@@ -12,6 +12,12 @@ CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
 
+# 👇 Ovde dodaš poznate vault / sistemske adrese koje želiš da ignorišeš
+IGNORED_ADDRESSES = [
+    "2y66QqQNVzC9321h9shfndZxH3eqdvmMSP2EMuitBJG2",  # Meteora (DIS) Vault Authority
+    # Dodaj više ako znaš dodatne vault adrese
+]
+
 def get_token_price(mint_address):
     try:
         url = f"{DEXSCREENER_API}{mint_address}"
@@ -54,10 +60,14 @@ def webhook():
                     continue
 
                 owner = post.get("owner")
+                if owner in IGNORED_ADDRESSES:
+                    print(f"⏩ Ignorisana sistemska adresa: {owner}")
+                    continue
+
                 decimals = int(post["uiTokenAmount"]["decimals"])
                 post_amount = int(post["uiTokenAmount"]["amount"])
 
-                # Nađi odgovarajući pre_balance za istu adresu
+                # Nađi odgovarajući pre_balance
                 pre_amount = None
                 for pre in pre_balances:
                     if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
@@ -65,7 +75,7 @@ def webhook():
                         break
 
                 if pre_amount is None:
-                    print(f"⏩ Preskačeno: {owner} nema pre_balance (verovatno vault)")
+                    print(f"⏩ Preskačeno: {owner} nema pre_balance (verovatno sistemska)")
                     continue
 
                 delta_raw = post_amount - pre_amount
@@ -111,7 +121,6 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(debug=True)
-
 
 
 
