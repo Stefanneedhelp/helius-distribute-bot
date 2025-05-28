@@ -2,9 +2,9 @@ import os
 from flask import Flask, request
 import requests
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 
 load_dotenv()
-
 app = Flask(__name__)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -18,8 +18,7 @@ def get_token_price(mint_address):
         response = requests.get(url)
         data = response.json()
         if "pairs" in data and len(data["pairs"]) > 0:
-            price_usd = float(data["pairs"][0]["priceUsd"])
-            return price_usd
+            return float(data["pairs"][0]["priceUsd"])
     except Exception as e:
         print(f"❌ Greška u dohvatanju cene: {e}")
     return None
@@ -29,23 +28,21 @@ def send_telegram_message(message):
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
         response = requests.post(url, json=payload)
-        print(f"✅ Poslata poruka: {response.status_code}")
+        print(f"✅ Poruka poslata: {response.status_code}")
     except Exception as e:
         print(f"❌ Greška u slanju poruke: {e}")
 
 @app.route("/", methods=["POST"])
 def webhook():
     payload = request.json
-    print(f"📥 Stigao payload: {payload}")
-
     for tx in payload:
         logs = tx.get("meta", {}).get("logMessages", [])
         if not any("Instruction: Swap" in log for log in logs):
-            print("⏩ Preskačem: nije swap.")
             continue
 
         post_balances = tx.get("meta", {}).get("postTokenBalances", [])
         pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
+        block_time = tx.get("blockTime")
 
         for post in post_balances:
             if post.get("mint") != MONITORED_MINT:
@@ -55,41 +52,44 @@ def webhook():
             decimals = int(post["uiTokenAmount"]["decimals"])
             post_amount = int(post["uiTokenAmount"]["amount"])
 
-            # Nađi pre amount za istog ownera
             pre_amount = 0
             for pre in pre_balances:
                 if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
                     pre_amount = int(pre["uiTokenAmount"]["amount"])
                     break
 
-            delta = abs(post_amount - pre_amount) / (10 ** decimals)
-            usd_price = get_token_price(MONITORED_MINT)
+            delta_raw = post_amount - pre_amount
+            if delta_raw == 0:
+                continue
 
+            side = "BUY" if delta_raw > 0 else "SELL"
+            emoji = "🟢" if side == "BUY" else "🔴"
+            delta = abs(delta_raw) / (10 ** decimals)
+
+            usd_price = get_token_price(MONITORED_MINT)
             if usd_price is None:
-                print("❌ Nema cene.")
                 continue
 
             value_usd = delta * usd_price
-            print(f"📊 Transakcija: Δ{delta:.4f} × ${usd_price:.4f} = ${value_usd:.2f}")
+            if value_usd < 500:
+                continue
 
-            if value_usd >= 500:
-                msg = (
-                    f"🔁 <b>SWAP transakcija preko $500</b>\n\n"
-                    f"<b>Token:</b> {MONITORED_MINT}\n"
-                    f"<b>Promena:</b> {delta:.4f}\n"
-                    f"<b>Cena:</b> ${usd_price:.4f}\n"
-                    f"<b>Ukupno:</b> ${value_usd:.2f}"
-                )
-                send_telegram_message(msg)
-            else:
-                print(f"⏬ Swap ispod $100: ${value_usd:.2f}")
+            # UTC+2 vreme
+            utc_time = datetime.utcfromtimestamp(block_time) + timedelta(hours=2)
+            time_str = utc_time.strftime("%Y-%m-%d %H:%M:%S")
+
+            message = (
+                f"{emoji} <b>{side}</b>\n"
+                f"<b>Adresa:</b> <a href='https://solscan.io/account/{owner}'>{owner}</a>\n"
+                f"<b>Vrednost:</b> ${value_usd:,.2f}\n"
+                f"<b>Vreme:</b> {time_str} (UTC+2)"
+            )
+            send_telegram_message(message)
 
     return "OK", 200
 
 if __name__ == "__main__":
     app.run(debug=True)
-
-
 
 
 
