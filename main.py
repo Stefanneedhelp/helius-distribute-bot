@@ -11,6 +11,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
+SOL_MINT = "So11111111111111111111111111111111111111112"
 
 def get_token_price(mint_address):
     try:
@@ -44,53 +45,60 @@ def webhook():
         pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
         block_time = tx.get("blockTime")
 
+        token_delta_map = {}
+        sol_delta_map = {}
+
         for post in post_balances:
-            if post.get("mint") != MONITORED_MINT:
-                continue
-
+            mint = post.get("mint")
             owner = post.get("owner")
+            amount = int(post["uiTokenAmount"]["amount"])
             decimals = int(post["uiTokenAmount"]["decimals"])
-            post_amount = int(post["uiTokenAmount"]["amount"])
 
-            pre_amount = 0
             for pre in pre_balances:
-                if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
+                if pre.get("mint") == mint and pre.get("owner") == owner:
                     pre_amount = int(pre["uiTokenAmount"]["amount"])
+                    delta = amount - pre_amount
+                    if mint == MONITORED_MINT:
+                        token_delta_map[owner] = {"delta": delta, "decimals": decimals}
+                    elif mint == SOL_MINT:
+                        sol_delta_map[owner] = {"delta": delta, "decimals": decimals}
                     break
 
-            delta_raw = post_amount - pre_amount
-            if delta_raw == 0:
-                continue
+        for owner in token_delta_map:
+            if owner in sol_delta_map:
+                token_data = token_delta_map[owner]
+                sol_data = sol_delta_map[owner]
 
-            side = "BUY" if delta_raw > 0 else "SELL"
-            emoji = "🟢" if side == "BUY" else "🔴"
-            delta = abs(delta_raw) / (10 ** decimals)
+                token_delta = token_data["delta"] / (10 ** token_data["decimals"])
+                sol_delta = sol_data["delta"] / (10 ** sol_data["decimals"])
 
-            usd_price = get_token_price(MONITORED_MINT)
-            if usd_price is None:
-                continue
+                if token_delta == 0 or sol_delta == 0:
+                    continue
 
-            value_usd = delta * usd_price
-            if value_usd < 500:
-                continue
+                side = "BUY" if token_delta > 0 else "SELL"
+                emoji = "🟢" if side == "BUY" else "🔴"
+                price = abs(sol_delta / token_delta)
+                value = abs(token_delta * price)
 
-            # UTC+2 vreme
-            utc_time = datetime.utcfromtimestamp(block_time) + timedelta(hours=2)
-            time_str = utc_time.strftime("%Y-%m-%d %H:%M:%S")
+                if value < 500:
+                    continue
 
-            message = (
-                f"{emoji} <b>{side}</b>\n"
-                f"<b>Adresa:</b> <a href='https://solscan.io/account/{owner}'>{owner}</a>\n"
-                f"<b>Vrednost:</b> ${value_usd:,.2f}\n"
-                f"<b>Vreme:</b> {time_str} (UTC+2)"
-            )
-            send_telegram_message(message)
+                # UTC+2 vreme
+                utc_time = datetime.utcfromtimestamp(block_time) + timedelta(hours=2)
+                time_str = utc_time.strftime("%Y-%m-%d %H:%M:%S")
+
+                message = (
+                    f"{emoji} <b>{side}</b>\n"
+                    f"<b>Adresa:</b> <a href='https://solscan.io/account/{owner}'>{owner}</a>\n"
+                    f"<b>Vrednost:</b> ${value:,.2f}\n"
+                    f"<b>Vreme:</b> {time_str} (UTC+2)"
+                )
+                send_telegram_message(message)
 
     return "OK", 200
 
 if __name__ == "__main__":
     app.run(debug=True)
-
 
 
 
