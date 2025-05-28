@@ -11,7 +11,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/tokens/"
 MONITORED_MINT = os.getenv("MONITORED_MINT")
-SOL_MINT = "So11111111111111111111111111111111111111112"
 
 def get_token_price(mint_address):
     try:
@@ -50,8 +49,6 @@ def webhook():
             pre_balances = tx.get("meta", {}).get("preTokenBalances", [])
             block_time = tx.get("blockTime")
 
-            token_delta_map = {}
-
             for post in post_balances:
                 if post.get("mint") != MONITORED_MINT:
                     continue
@@ -82,7 +79,7 @@ def webhook():
                 value = abs(token_delta * usd_price)
                 print(f"📊 {side}: {abs(token_delta):.4f} × ${usd_price:.6f} = ${value:.2f}")
 
-                if value < 1:
+                if value < 1000:
                     print(f"⏬ Preskačeno: vrednost ${value:.2f}")
                     continue
 
