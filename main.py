@@ -57,18 +57,23 @@ def webhook():
                 decimals = int(post["uiTokenAmount"]["decimals"])
                 post_amount = int(post["uiTokenAmount"]["amount"])
 
-                pre_amount = 0
+                # Nađi odgovarajući pre_balance za istu adresu
+                pre_amount = None
                 for pre in pre_balances:
                     if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
                         pre_amount = int(pre["uiTokenAmount"]["amount"])
                         break
+
+                if pre_amount is None:
+                    print(f"⏩ Preskačeno: {owner} nema pre_balance (verovatno vault)")
+                    continue
 
                 delta_raw = post_amount - pre_amount
                 if delta_raw == 0:
                     continue
 
                 token_delta = delta_raw / (10 ** decimals)
-                side = "BUY" if token_delta > 0 else "SELL"
+                side = "BUY" if delta_raw > 0 else "SELL"
                 emoji = "🟢" if side == "BUY" else "🔴"
 
                 usd_price = get_token_price(MONITORED_MINT)
