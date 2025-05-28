@@ -74,16 +74,25 @@ def webhook():
                     token_data = token_delta_map[owner]
                     sol_data = sol_delta_map[owner]
 
+                    print(f"\n🔍 Proveravam vlasnika: {owner}")
+                    print(f"DEBUG token_delta_raw: {token_data['delta']} (decimals: {token_data['decimals']})")
+                    print(f"DEBUG sol_delta_raw: {sol_data['delta']} (decimals: {sol_data['decimals']})")
+
                     token_delta = token_data["delta"] / (10 ** token_data["decimals"])
                     sol_delta = sol_data["delta"] / (10 ** sol_data["decimals"])
 
+                    print(f"DEBUG token_delta: {token_delta}, sol_delta: {sol_delta}")
+
                     if token_delta == 0 or sol_delta == 0:
+                        print("⏩ Preskačeno: delta je 0")
                         continue
 
                     side = "BUY" if token_delta > 0 else "SELL"
                     emoji = "🟢" if side == "BUY" else "🔴"
-                    price = abs(sol_delta / token_delta)
+                    price = abs(sol_delta / token_delta) if token_delta != 0 else 0
                     value = abs(token_delta * price)
+
+                    print(f"DEBUG izračunata cena: {price}, vrednost: ${value:.2f}")
 
                     if value < 500:
                         print(f"⏬ Preskačeno: vrednost ${value:.2f}")
