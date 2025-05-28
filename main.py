@@ -51,64 +51,53 @@ def webhook():
             block_time = tx.get("blockTime")
 
             token_delta_map = {}
-            sol_delta_map = {}
 
             for post in post_balances:
-                mint = post.get("mint")
-                owner = post.get("owner")
-                amount = int(post["uiTokenAmount"]["amount"])
-                decimals = int(post["uiTokenAmount"]["decimals"])
+                if post.get("mint") != MONITORED_MINT:
+                    continue
 
+                owner = post.get("owner")
+                decimals = int(post["uiTokenAmount"]["decimals"])
+                post_amount = int(post["uiTokenAmount"]["amount"])
+
+                pre_amount = 0
                 for pre in pre_balances:
-                    if pre.get("mint") == mint and pre.get("owner") == owner:
+                    if pre.get("mint") == MONITORED_MINT and pre.get("owner") == owner:
                         pre_amount = int(pre["uiTokenAmount"]["amount"])
-                        delta = amount - pre_amount
-                        if mint == MONITORED_MINT:
-                            token_delta_map[owner] = {"delta": delta, "decimals": decimals}
-                        elif mint == SOL_MINT:
-                            sol_delta_map[owner] = {"delta": delta, "decimals": decimals}
                         break
 
-            for owner in token_delta_map:
-                if owner in sol_delta_map:
-                    token_data = token_delta_map[owner]
-                    sol_data = sol_delta_map[owner]
+                delta_raw = post_amount - pre_amount
+                if delta_raw == 0:
+                    continue
 
-                    print(f"\n🔍 Proveravam vlasnika: {owner}")
-                    print(f"DEBUG token_delta_raw: {token_data['delta']} (decimals: {token_data['decimals']})")
-                    print(f"DEBUG sol_delta_raw: {sol_data['delta']} (decimals: {sol_data['decimals']})")
+                token_delta = delta_raw / (10 ** decimals)
+                side = "BUY" if token_delta > 0 else "SELL"
+                emoji = "🟢" if side == "BUY" else "🔴"
 
-                    token_delta = token_data["delta"] / (10 ** token_data["decimals"])
-                    sol_delta = sol_data["delta"] / (10 ** sol_data["decimals"])
+                usd_price = get_token_price(MONITORED_MINT)
+                if usd_price is None:
+                    print("❌ Nema cene.")
+                    continue
 
-                    print(f"DEBUG token_delta: {token_delta}, sol_delta: {sol_delta}")
+                value = abs(token_delta * usd_price)
+                print(f"📊 {side}: {abs(token_delta):.4f} × ${usd_price:.6f} = ${value:.2f}")
 
-                    if token_delta == 0 or sol_delta == 0:
-                        print("⏩ Preskačeno: delta je 0")
-                        continue
+                if value < 1:
+                    print(f"⏬ Preskačeno: vrednost ${value:.2f}")
+                    continue
 
-                    side = "BUY" if token_delta > 0 else "SELL"
-                    emoji = "🟢" if side == "BUY" else "🔴"
-                    price = abs(sol_delta / token_delta) if token_delta != 0 else 0
-                    value = abs(token_delta * price)
+                # UTC+2 vreme
+                utc_time = datetime.utcfromtimestamp(block_time) + timedelta(hours=2)
+                time_str = utc_time.strftime("%Y-%m-%d %H:%M:%S")
 
-                    print(f"DEBUG izračunata cena: {price}, vrednost: ${value:.2f}")
-
-                    if value < 500:
-                        print(f"⏬ Preskačeno: vrednost ${value:.2f}")
-                        continue
-
-                    # UTC+2 vreme
-                    utc_time = datetime.utcfromtimestamp(block_time) + timedelta(hours=2)
-                    time_str = utc_time.strftime("%Y-%m-%d %H:%M:%S")
-
-                    message = (
-                        f"{emoji} <b>{side}</b>\n"
-                        f"<b>Adresa:</b> <a href='https://solscan.io/account/{owner}'>{owner}</a>\n"
-                        f"<b>Vrednost:</b> ${value:,.2f}\n"
-                        f"<b>Vreme:</b> {time_str} (UTC+2)"
-                    )
-                    send_telegram_message(message)
+                message = (
+                    f"{emoji} <b>{side}</b>\n"
+                    f"<b>Adresa:</b> <a href='https://solscan.io/account/{owner}'>{owner}</a>\n"
+                    f"<b>Količina:</b> {abs(token_delta):,.4f}\n"
+                    f"<b>Vrednost:</b> ${value:,.2f}\n"
+                    f"<b>Vreme:</b> {time_str} (UTC+2)"
+                )
+                send_telegram_message(message)
 
         return "OK", 200
 
