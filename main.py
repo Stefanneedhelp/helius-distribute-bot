@@ -82,7 +82,7 @@ def webhook():
                 value = abs(token_delta * usd_price)
                 print(f"📊 {side}: {abs(token_delta):.4f} × ${usd_price:.6f} = ${value:.2f}")
 
-                if value < 1:
+                if value =< 500:
                     print(f"⏬ Preskačeno: vrednost ${value:.2f}")
                     continue
 
